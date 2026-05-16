@@ -1,11 +1,19 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import Editor from '@monaco-editor/react';
-import { FileJson, FileText, Download, Upload, AlertCircle, Table2, ListTree, Code2, Database, Copy, Minimize2, Search, Check } from 'lucide-react';
+import { FileJson, FileText, Download, Upload, AlertCircle, Table2, ListTree, Code2, Database, Copy, Minimize2, Search, Check, Network } from 'lucide-react';
 
-// --- Recursive Object Flattener ---
+// --- Bulletproof Recursive Flattener for Excel ---
 const flattenRow = (obj: any, parent = '', res: any = {}) => {
-  if (typeof obj !== 'object' || obj === null) {
+  if (obj === null || obj === undefined) {
+    res[parent || 'Value'] = '';
+    return res;
+  }
+  if (typeof obj !== 'object') {
     res[parent || 'Value'] = obj;
+    return res;
+  }
+  if (Array.isArray(obj)) {
+    res[parent || 'ArrayData'] = JSON.stringify(obj);
     return res;
   }
   for (let key in obj) {
@@ -16,11 +24,8 @@ const flattenRow = (obj: any, parent = '', res: any = {}) => {
     if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
       flattenRow(val, propName, res);
     } else if (Array.isArray(val)) {
-      try {
-        res[propName] = JSON.stringify(val);
-      } catch {
-        res[propName] = "[Array]";
-      }
+      // Aggressive fallback to prevent [object Object]
+      res[propName] = JSON.stringify(val);
     } else {
       res[propName] = val;
     }
@@ -28,7 +33,64 @@ const flattenRow = (obj: any, parent = '', res: any = {}) => {
   return res;
 };
 
-// --- Tree Component ---
+// --- JSON Crack Style Node Visualizer ---
+const VisualNode = ({ label, data }: { label: string, data: any }) => {
+  const isObject = typeof data === 'object' && data !== null;
+  const isArray = Array.isArray(data);
+
+  if (!isObject) return null;
+
+  // Split data into raw values (to show on the card) and nested objects (to spawn as child cards)
+  const primitives = Object.entries(data).filter(([_, v]) => typeof v !== 'object' || v === null);
+  const complex = Object.entries(data).filter(([_, v]) => typeof v === 'object' && v !== null);
+
+  return (
+    <div className="flex items-center">
+      {/* Node Card */}
+      <div className="min-w-[180px] max-w-[300px] bg-[#1e1e1e] border border-[#444] rounded-lg shadow-2xl flex flex-col shrink-0 relative z-10 transition-transform hover:scale-[1.02]">
+        <div className="bg-[#2d2d2d] px-3 py-2 border-b border-[#444] text-xs font-bold flex justify-between items-center gap-4 rounded-t-lg">
+          <span className="truncate text-blue-400">{label}</span>
+          <span className="text-gray-400 font-normal bg-[#1a1a1a] px-2 py-0.5 rounded-full text-[10px]">
+            {isArray ? `Array[${data.length}]` : 'Object'}
+          </span>
+        </div>
+        
+        {primitives.length > 0 && (
+          <div className="p-2 flex flex-col gap-1 text-[11px] font-mono overflow-y-auto max-h-[250px] custom-scrollbar">
+            {primitives.map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-4 border-b border-[#333] pb-1.5 pt-1.5 last:border-0">
+                <span className="text-gray-500 truncate min-w-[50px] font-semibold">{k}</span>
+                <span className={`truncate text-right ${typeof v === 'string' ? "text-green-400" : typeof v === 'number' ? "text-orange-400" : "text-purple-400"}`} title={String(v)}>
+                  {v === null ? 'null' : String(v)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Connectors & Nested Children */}
+      {complex.length > 0 && (
+        <div className="flex items-stretch ml-8 relative">
+          {/* Main connector line coming out of the card */}
+          <div className="w-8 border-t-2 border-[#555] absolute left-[-32px] top-1/2"></div>
+          
+          <div className="flex flex-col justify-center gap-6 py-4 border-l-2 border-[#555] pl-8 relative">
+            {complex.map(([k, v]) => (
+              <div key={k} className="relative flex items-center">
+                {/* Connector line going into child card */}
+                <div className="w-8 border-t-2 border-[#555] absolute left-[-32px] top-1/2"></div>
+                <VisualNode label={isArray ? `Index [${k}]` : k} data={v} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- Tree Component (Developer View) ---
 const JsonTree = ({ data, name = "root" }: { data: any, name?: string }) => {
   const [isOpen, setIsOpen] = useState(true);
   const isObject = data !== null && typeof data === 'object';
@@ -38,7 +100,7 @@ const JsonTree = ({ data, name = "root" }: { data: any, name?: string }) => {
     return (
       <div className="flex pl-4 py-1 text-sm hover:bg-[#2a2a2a] transition-colors">
         <span className="text-blue-300 font-semibold mr-2">{name}:</span>
-        <span className={typeof data === 'string' ? "text-green-400" : typeof data === 'number' ? "text-orange-400" : "text-purple-400"}>
+        <span className={typeof data === 'string' ? "text-green-400" : "text-orange-400"}>
           {typeof data === 'string' ? `"${data}"` : String(data)}
         </span>
       </div>
@@ -63,30 +125,20 @@ const JsonTree = ({ data, name = "root" }: { data: any, name?: string }) => {
   );
 };
 
-// --- High-Grade Structured Table Component with Advanced Search ---
+// --- Structured Table Component ---
 const JsonTable = ({ data, searchQuery }: { data: any[], searchQuery: string }) => {
-  if (!data || data.length === 0) return <div className="p-8 text-gray-500 text-center">No valid data to display.</div>;
+  if (!data || data.length === 0) return <div className="p-8 text-gray-500 text-center flex flex-col items-center"><Table2 size={48} className="mb-4 opacity-20"/> No valid tabular data to display. Use Visualizer or Tree view.</div>;
 
   const flattenedData = data.map(row => flattenRow(row));
-  
-  const headers = Array.from(new Set(
-    flattenedData.flatMap(row => Object.keys(row))
-  ));
+  const headers = Array.from(new Set(flattenedData.flatMap(row => Object.keys(row))));
 
-  // Smart Search: Filter rows across ALL columns based on search query
   const filteredData = useMemo(() => {
     if (!searchQuery.trim()) return flattenedData;
     const lowerQuery = searchQuery.toLowerCase();
-    return flattenedData.filter(row => {
-      return Object.values(row).some(val => 
-        String(val ?? '').toLowerCase().includes(lowerQuery)
-      );
-    });
+    return flattenedData.filter(row => Object.values(row).some(val => String(val ?? '').toLowerCase().includes(lowerQuery)));
   }, [flattenedData, searchQuery]);
 
-  if (filteredData.length === 0) {
-    return <div className="p-8 text-gray-500 text-center">No results found for "{searchQuery}".</div>;
-  }
+  if (filteredData.length === 0) return <div className="p-8 text-gray-500 text-center">No results found.</div>;
 
   return (
     <div className="w-full h-full overflow-auto bg-[#181818] p-4">
@@ -108,7 +160,7 @@ const JsonTable = ({ data, searchQuery }: { data: any[], searchQuery: string }) 
                   const cellValue = row[header];
                   return (
                     <td key={header} className="p-3 text-gray-300 border-r border-[#333] last:border-r-0 max-w-xs truncate" title={String(cellValue ?? '')}>
-                      {cellValue !== undefined && cellValue !== null ? String(cellValue) : <span className="text-gray-600 italic">null</span>}
+                      {cellValue !== undefined && cellValue !== null && cellValue !== '' ? String(cellValue) : <span className="text-gray-600 italic">--</span>}
                     </td>
                   );
                 })}
@@ -122,23 +174,18 @@ const JsonTable = ({ data, searchQuery }: { data: any[], searchQuery: string }) 
 };
 
 export default function App() {
-  const [jsonText, setJsonText] = useState('{\n  "message": "Paste your nested data here!"\n}');
+  const [jsonText, setJsonText] = useState('{\n  "status": "Success",\n  "project": {\n    "name": "JSON Crack Clone",\n    "features": ["Nodes", "Tables", "Excel"]\n  }\n}');
   const [parsedData, setParsedData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'table' | 'tree' | 'code'>('table');
+  const [activeTab, setActiveTab] = useState<'visualizer' | 'table' | 'tree' | 'code'>('visualizer');
   const [selectedTablePath, setSelectedTablePath] = useState<string>('root');
   const [searchQuery, setSearchQuery] = useState('');
   const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Parse text live
   useEffect(() => {
     try {
-      if (!jsonText.trim()) {
-        setParsedData(null);
-        setError(null);
-        return;
-      }
+      if (!jsonText.trim()) { setParsedData(null); setError(null); return; }
       const parsed = JSON.parse(jsonText);
       setParsedData(parsed);
       setError(null);
@@ -148,33 +195,25 @@ export default function App() {
     }
   }, [jsonText]);
 
-  // Deep scanner
   const availableTables = useMemo(() => {
     if (!parsedData) return {};
     const tables: Record<string, any[]> = {};
-
     const traverse = (obj: any, path: string) => {
       if (Array.isArray(obj)) {
         let flatArr = obj;
         while (flatArr.length > 0 && Array.isArray(flatArr[0])) flatArr = flatArr.flat();
         tables[path] = flatArr;
-
         if (flatArr.length > 0 && typeof flatArr[0] === 'object' && flatArr[0] !== null) {
           Object.keys(flatArr[0]).forEach(k => {
             const val = flatArr[0][k];
-            if (Array.isArray(val) || (typeof val === 'object' && val !== null)) {
-              traverse(val, `${path} -> ${k}`);
-            }
+            if (Array.isArray(val) || (typeof val === 'object' && val !== null)) traverse(val, `${path} -> ${k}`);
           });
         }
       } else if (typeof obj === 'object' && obj !== null) {
         if (path === 'root') tables['root'] = [obj];
-        Object.keys(obj).forEach(key => {
-          traverse(obj[key], path === 'root' ? key : `${path} -> ${key}`);
-        });
+        Object.keys(obj).forEach(key => traverse(obj[key], path === 'root' ? key : `${path} -> ${key}`));
       }
     };
-
     traverse(parsedData, 'root');
     return tables;
   }, [parsedData]);
@@ -194,33 +233,11 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  const formatJSON = () => {
-    if (parsedData) setJsonText(JSON.stringify(parsedData, null, 2));
-  };
-
-  const minifyJSON = () => {
-    if (parsedData) setJsonText(JSON.stringify(parsedData));
-  };
-
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(jsonText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const exportAsJSON = () => {
-    if (!parsedData) return;
-    const blob = new Blob([JSON.stringify(parsedData, null, 2)], { type: 'application/json' });
-    downloadBlob(blob, 'data-export.json');
-  };
-
   const exportAsCSV = () => {
     const targetData = availableTables[selectedTablePath];
     if (!targetData || targetData.length === 0) return;
 
     const flattenedData = targetData.map(row => flattenRow(row));
-    
-    // Apply the active search filter to the CSV export too!
     const lowerQuery = searchQuery.toLowerCase();
     const exportData = searchQuery.trim() 
       ? flattenedData.filter(row => Object.values(row).some(val => String(val ?? '').toLowerCase().includes(lowerQuery)))
@@ -243,14 +260,10 @@ export default function App() {
     ];
 
     const blob = new Blob(['\uFEFF' + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    downloadBlob(blob, `${selectedTablePath.replace(/ -> /g, '_')}-export.csv`);
-  };
-
-  const downloadBlob = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename;
+    a.download = `${selectedTablePath.replace(/ -> /g, '_')}-export.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -262,129 +275,95 @@ export default function App() {
       <div className="w-16 flex flex-col items-center py-4 bg-[#1a1a1a] border-r border-[#2d2d2d] justify-between z-10 shadow-lg">
         <div className="flex flex-col gap-5 w-full items-center">
           <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
-          <button title="Upload JSON File" onClick={() => fileInputRef.current?.click()} className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg">
-            <Upload size={22} />
-          </button>
-
+          <button title="Upload File" onClick={() => fileInputRef.current?.click()} className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg"><Upload size={22} /></button>
           <div className="w-8 h-px bg-[#333]"></div>
-
-          <button title="Format JSON (Beautify)" onClick={formatJSON} className="text-blue-400 hover:text-blue-300 transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg">
-            <FileJson size={22} />
-          </button>
-          
-          <button title="Minify JSON (Compress)" onClick={minifyJSON} className="text-orange-400 hover:text-orange-300 transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg">
-            <Minimize2 size={22} />
-          </button>
-
-          <button title="Copy Current Code" onClick={copyToClipboard} className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg">
+          <button title="Format Code" onClick={() => {if(parsedData) setJsonText(JSON.stringify(parsedData, null, 2))}} className="text-blue-400 hover:text-blue-300 transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg"><FileJson size={22} /></button>
+          <button title="Minify Code" onClick={() => {if(parsedData) setJsonText(JSON.stringify(parsedData))}} className="text-orange-400 hover:text-orange-300 transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg"><Minimize2 size={22} /></button>
+          <button title="Copy Code" onClick={() => {navigator.clipboard.writeText(jsonText); setCopied(true); setTimeout(() => setCopied(false), 2000)}} className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg">
             {copied ? <Check size={22} className="text-green-500" /> : <Copy size={22} />}
           </button>
-
           <div className="w-8 h-px bg-[#333]"></div>
-
-          <button title={`Export to Excel`} onClick={exportAsCSV} className="text-green-500 hover:text-green-400 transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg">
-            <FileText size={22} />
-          </button>
-
-          <button title="Export Entire JSON" onClick={exportAsJSON} className="text-purple-400 hover:text-purple-300 transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg">
-            <Download size={22} />
-          </button>
+          <button title="Export to Excel" onClick={exportAsCSV} className="text-green-500 hover:text-green-400 transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg"><FileText size={22} /></button>
         </div>
       </div>
 
       {/* Main Workspace */}
       <div className="flex-1 flex flex-col min-w-0">
         
-        {/* Top Header & Navigation */}
+        {/* Top Navigation */}
         <div className="h-14 bg-[#1a1a1a] border-b border-[#2d2d2d] flex items-center justify-between px-4">
           <div className="flex gap-2">
-            <button 
-              onClick={() => setActiveTab('table')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'table' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:bg-[#2d2d2d] hover:text-gray-200'}`}
-            >
-              <Table2 size={16} /> Table View
+            <button onClick={() => setActiveTab('visualizer')} className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'visualizer' ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-400 hover:bg-[#2d2d2d]'}`}>
+              <Network size={16} /> Visualizer
             </button>
-            <button 
-              onClick={() => setActiveTab('tree')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'tree' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:bg-[#2d2d2d] hover:text-gray-200'}`}
-            >
-              <ListTree size={16} /> Tree View
+            <button onClick={() => setActiveTab('table')} className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'table' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:bg-[#2d2d2d]'}`}>
+              <Table2 size={16} /> Table
             </button>
-            <button 
-              onClick={() => setActiveTab('code')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'code' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:bg-[#2d2d2d] hover:text-gray-200'}`}
-            >
+            <button onClick={() => setActiveTab('tree')} className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'tree' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:bg-[#2d2d2d]'}`}>
+              <ListTree size={16} /> Developer Tree
+            </button>
+            <button onClick={() => setActiveTab('code')} className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'code' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:bg-[#2d2d2d]'}`}>
               <Code2 size={16} /> Raw Code
             </button>
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Global Search Bar - Only shows on Table view */}
             {activeTab === 'table' && parsedData && (
-              <div className="flex items-center gap-2 bg-[#121212] px-3 py-1.5 rounded-md border border-[#333] focus-within:border-blue-500 transition-colors w-64">
+              <div className="flex items-center gap-2 bg-[#121212] px-3 py-1.5 rounded-md border border-[#333] w-64">
                 <Search size={14} className="text-gray-500" />
-                <input 
-                  type="text" 
-                  placeholder="Search table data..." 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="bg-transparent text-xs text-gray-200 outline-none w-full placeholder-gray-600"
-                />
+                <input type="text" placeholder="Search data..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="bg-transparent text-xs text-gray-200 outline-none w-full" />
               </div>
             )}
-
             {Object.keys(availableTables).length > 0 && activeTab === 'table' && (
-              <div className="flex items-center gap-2 bg-[#252526] px-3 py-1.5 rounded-md border border-[#333] shadow-inner">
+              <div className="flex items-center gap-2 bg-[#252526] px-3 py-1.5 rounded-md border border-[#333]">
                 <Database size={14} className="text-purple-400" />
-                <select 
-                  value={selectedTablePath} 
-                  onChange={(e) => {
-                    setSelectedTablePath(e.target.value);
-                    setSearchQuery(''); // Reset search on table change
-                  }}
-                  className="bg-transparent text-xs font-semibold text-gray-200 outline-none cursor-pointer max-w-[180px] truncate"
-                >
-                  {Object.keys(availableTables).map(path => (
-                    <option key={path} value={path} className="bg-[#252526]">
-                      {path}
-                    </option>
-                  ))}
+                <select value={selectedTablePath} onChange={(e) => { setSelectedTablePath(e.target.value); setSearchQuery(''); }} className="bg-transparent text-xs font-semibold text-gray-200 outline-none cursor-pointer max-w-[180px] truncate">
+                  {Object.keys(availableTables).map(path => <option key={path} value={path} className="bg-[#252526]">{path}</option>)}
                 </select>
-              </div>
-            )}
-
-            {error && (
-              <div className="flex items-center text-red-400 text-xs gap-1.5 bg-red-400/10 border border-red-500/20 px-3 py-1.5 rounded-full font-medium">
-                <AlertCircle size={14} /> Syntax Error
               </div>
             )}
           </div>
         </div>
 
-        {/* Content Area */}
+        {/* Dynamic Content Area */}
         <div className="flex-1 overflow-hidden relative">
+          
+          {/* RAW CODE */}
           {activeTab === 'code' && (
-            <div className="h-full bg-[#1e1e1e] animate-in fade-in duration-200">
-              <Editor
-                height="100%"
-                defaultLanguage="json"
-                theme="vs-dark"
-                value={jsonText}
-                onChange={(val) => setJsonText(val || '')}
-                options={{ minimap: { enabled: false }, fontSize: 14, wordWrap: 'on', padding: { top: 16 } }}
-              />
+            <div className="h-full bg-[#1e1e1e]">
+              <Editor height="100%" defaultLanguage="json" theme="vs-dark" value={jsonText} onChange={(val) => setJsonText(val || '')} options={{ minimap: { enabled: false }, fontSize: 14, wordWrap: 'on', padding: { top: 16 } }} />
             </div>
           )}
           
+          {/* DEVELOPER TREE */}
           {activeTab === 'tree' && (
-            <div className="h-full overflow-y-auto bg-[#181818] p-4 animate-in fade-in duration-200">
-              {parsedData ? <JsonTree data={parsedData} /> : <div className="text-gray-500 flex justify-center mt-10">Invalid or empty JSON.</div>}
+            <div className="h-full overflow-y-auto bg-[#181818] p-4">
+              {parsedData ? <JsonTree data={parsedData} /> : <div className="text-gray-500 flex justify-center mt-10">Invalid JSON</div>}
             </div>
           )}
 
+          {/* TABLE VIEW */}
           {activeTab === 'table' && (
-            <div className="h-full bg-[#121212] animate-in fade-in duration-200">
-              {parsedData ? <JsonTable data={availableTables[selectedTablePath] || []} searchQuery={searchQuery} /> : <div className="text-gray-500 flex justify-center mt-10">Invalid or empty JSON.</div>}
+            <div className="h-full bg-[#121212]">
+              {parsedData ? <JsonTable data={availableTables[selectedTablePath] || []} searchQuery={searchQuery} /> : <div className="text-gray-500 flex justify-center mt-10">Invalid JSON</div>}
+            </div>
+          )}
+
+          {/* NEW: GRAPH VISUALIZER */}
+          {activeTab === 'visualizer' && (
+            <div className="h-full bg-[#121212] overflow-auto relative p-16 custom-scrollbar-xy">
+              <style>{`
+                .custom-scrollbar-xy::-webkit-scrollbar { width: 12px; height: 12px; }
+                .custom-scrollbar-xy::-webkit-scrollbar-track { background: #121212; }
+                .custom-scrollbar-xy::-webkit-scrollbar-thumb { background: #333; border-radius: 6px; border: 3px solid #121212; }
+              `}</style>
+              {parsedData ? (
+                <div className="inline-block min-w-max">
+                  <VisualNode label="Root Array/Object" data={parsedData} />
+                </div>
+              ) : (
+                <div className="text-gray-500 flex justify-center mt-10 w-full">Paste valid JSON to generate visualization.</div>
+              )}
             </div>
           )}
         </div>
@@ -394,15 +373,10 @@ export default function App() {
           <div className="flex items-center gap-4">
             <span className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${error ? 'bg-red-400' : 'bg-green-400'}`}></div>
-              {error ? `Parse Error: ${error}` : 'System Ready | Valid JSON'}
+              {error ? `Error: ${error}` : 'System Ready | Valid JSON'}
             </span>
-            {parsedData && !error && (
-              <span className="text-blue-200 bg-blue-800/50 px-2 py-0.5 rounded">
-                Rows in view: {availableTables[selectedTablePath]?.length || 0}
-              </span>
-            )}
           </div>
-          <span>Pro JSON Tool - High Grade</span>
+          <span>Pro JSON Tool - Visualizer Edition</span>
         </div>
       </div>
     </div>
