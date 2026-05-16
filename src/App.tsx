@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
-import { FileJson, FileText, Download, Upload, AlertCircle, Table2, ListTree, Code2 } from 'lucide-react';
+import { FileJson, FileText, Download, Upload, AlertCircle, Table2, ListTree, Code2, Database } from 'lucide-react';
 
 // --- Tree Component ---
 const JsonTree = ({ data, name = "root" }: { data: any, name?: string }) => {
@@ -40,22 +40,27 @@ const JsonTree = ({ data, name = "root" }: { data: any, name?: string }) => {
   );
 };
 
-// --- New Structured Table Component ---
+// --- Structured Table Component ---
 const JsonTable = ({ data }: { data: any }) => {
   if (!data) return <div className="p-8 text-gray-500 text-center">No valid data to display.</div>;
 
-  const isArray = Array.isArray(data);
-  const isObject = typeof data === 'object' && data !== null;
+  let tableData = data;
 
-  if (!isObject) {
-    return <div className="p-4 text-gray-300">{String(data)}</div>;
+  // Smart Array Flattener: If array is nested inside another array (e.g. [[{...}]]), flatten it out
+  if (Array.isArray(tableData) && tableData.some(Array.isArray)) {
+    tableData = tableData.flat();
   }
 
-  // Convert a single object into an array so it can be mapped into a table row
-  const dataArray = isArray ? data : [data];
+  const isArray = Array.isArray(tableData);
+  const isObject = typeof tableData === 'object' && tableData !== null;
+
+  if (!isObject) {
+    return <div className="p-4 text-gray-300">{String(tableData)}</div>;
+  }
+
+  const dataArray = isArray ? tableData : [tableData];
   if (dataArray.length === 0) return <div className="p-8 text-gray-500 text-center">Empty Array</div>;
 
-  // Dynamically extract all unique keys from the data to act as Table Headers
   const headers = Array.from(new Set(
     dataArray.flatMap(item => typeof item === 'object' && item !== null ? Object.keys(item) : ['Value'])
   ));
@@ -67,7 +72,7 @@ const JsonTable = ({ data }: { data: any }) => {
           <thead className="bg-[#252526] border-b border-[#333]">
             <tr>
               {headers.map(header => (
-                <th key={header} className="p-3 text-gray-200 font-semibold border-r border-[#333] last:border-r-0 uppercase text-xs tracking-wider sticky top-0 bg-[#252526] shadow-sm">
+                <th key={header} className="p-3 text-gray-200 font-semibold border-r border-[#333] last:border-r-0 uppercase text-xs tracking-wider sticky top-0 bg-[#252526] shadow-sm whitespace-nowrap">
                   {header}
                 </th>
               ))}
@@ -78,7 +83,6 @@ const JsonTable = ({ data }: { data: any }) => {
               <tr key={rowIndex} className="hover:bg-[#2a2a2a] transition-colors">
                 {headers.map(header => {
                   const cellValue = typeof row === 'object' && row !== null ? row[header] : row;
-                  // If a cell contains nested objects/arrays, stringify it so it doesn't crash the table
                   const displayValue = typeof cellValue === 'object' && cellValue !== null ? JSON.stringify(cellValue) : String(cellValue ?? '');
                   return (
                     <td key={header} className="p-3 text-gray-300 border-r border-[#333] last:border-r-0 max-w-xs truncate" title={displayValue}>
@@ -96,13 +100,13 @@ const JsonTable = ({ data }: { data: any }) => {
 };
 
 export default function App() {
-  const [jsonText, setJsonText] = useState('[\n  {\n    "ID": 1,\n    "Name": "John Doe",\n    "Role": "Admin",\n    "Status": "Active"\n  },\n  {\n    "ID": 2,\n    "Name": "Jane Smith",\n    "Role": "User",\n    "Status": "Inactive"\n  }\n]');
+  const [jsonText, setJsonText] = useState('{\n  "TASK_DATA": [\n    {\n      "ID": 1,\n      "Name": "Example Task"\n    }\n  ],\n  "TITLE_METADATA": [\n    {\n      "ID": "A1",\n      "Meta": "Some Data"\n    }\n  ]\n}');
   const [parsedData, setParsedData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'table' | 'tree' | 'code'>('table');
+  const [selectedNode, setSelectedNode] = useState<string>('root');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Parse text live
   useEffect(() => {
     try {
       if (!jsonText.trim()) {
@@ -113,11 +117,28 @@ export default function App() {
       const parsed = JSON.parse(jsonText);
       setParsedData(parsed);
       setError(null);
+      setSelectedNode('root'); // Reset dropdown when new data is pasted
     } catch (err: any) {
       setError(err.message);
       setParsedData(null);
     }
   }, [jsonText]);
+
+  // Determine what sub-tables are available in the JSON
+  const getAvailableNodes = () => {
+    if (!parsedData) return [];
+    if (typeof parsedData === 'object' && !Array.isArray(parsedData) && parsedData !== null) {
+      return ['root', ...Object.keys(parsedData)];
+    }
+    return ['root'];
+  };
+
+  // Get the currently focused data based on the dropdown
+  const getActiveData = () => {
+    if (!parsedData) return null;
+    if (selectedNode === 'root') return parsedData;
+    return parsedData[selectedNode];
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -138,26 +159,50 @@ export default function App() {
   };
 
   const exportAsCSV = () => {
-    if (!parsedData) return;
-    const dataToExport = Array.isArray(parsedData) ? parsedData : [parsedData];
-    if (dataToExport.length === 0) return;
+    const targetData = getActiveData();
+    if (!targetData) return;
 
-    const headers = Array.from(new Set(dataToExport.flatMap(obj => Object.keys(obj))));
+    let exportData = targetData;
+
+    // Smart Array Flattener for CSV
+    if (Array.isArray(exportData) && exportData.some(Array.isArray)) {
+      exportData = exportData.flat();
+    }
+
+    // Auto-unwrap logic if user leaves dropdown on 'root'
+    if (selectedNode === 'root' && typeof exportData === 'object' && !Array.isArray(exportData) && exportData !== null) {
+      const keys = Object.keys(exportData);
+      if (keys.length === 1 && Array.isArray(exportData[keys[0]])) {
+        exportData = exportData[keys[0]];
+      }
+    }
+
+    const dataArray = Array.isArray(exportData) ? exportData : [exportData];
+    if (dataArray.length === 0) return;
+
+    const headers = Array.from(new Set(
+      dataArray.flatMap(item => typeof item === 'object' && item !== null ? Object.keys(item) : ['Value'])
+    ));
+
     const csvRows = [
       headers.join(','),
-      ...dataToExport.map(row => 
+      ...dataArray.map(row => 
         headers.map(header => {
-          let cell = row[header] === null || row[header] === undefined ? '' : String(row[header]);
-          if (cell.includes(',') || cell.includes('"') || cell.includes('\n')) {
-            cell = `"${cell.replace(/"/g, '""')}"`;
+          let cellValue = typeof row === 'object' && row !== null ? row[header] : row;
+          let cellString = typeof cellValue === 'object' && cellValue !== null 
+            ? JSON.stringify(cellValue) 
+            : String(cellValue ?? '');
+          
+          if (cellString.includes(',') || cellString.includes('"') || cellString.includes('\n')) {
+            cellString = `"${cellString.replace(/"/g, '""')}"`;
           }
-          return cell;
+          return cellString;
         }).join(',')
       )
     ];
 
-    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
-    downloadBlob(blob, 'table-export.csv');
+    const blob = new Blob(['\uFEFF' + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    downloadBlob(blob, `${selectedNode === 'root' ? 'table' : selectedNode}-export.csv`);
   };
 
   const downloadBlob = (blob: Blob, filename: string) => {
@@ -186,11 +231,11 @@ export default function App() {
             <FileJson size={22} />
           </button>
           
-          <button title="Export Table as CSV" onClick={exportAsCSV} className="text-green-500 hover:text-green-400 transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg">
+          <button title={`Export ${selectedNode !== 'root' ? selectedNode : 'Table'} to Excel`} onClick={exportAsCSV} className="text-green-500 hover:text-green-400 transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg">
             <FileText size={22} />
           </button>
 
-          <button title="Export as JSON" onClick={exportAsJSON} className="text-purple-400 hover:text-purple-300 transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg">
+          <button title="Export Entire JSON" onClick={exportAsJSON} className="text-purple-400 hover:text-purple-300 transition-colors p-2 hover:bg-[#2d2d2d] rounded-lg">
             <Download size={22} />
           </button>
         </div>
@@ -222,11 +267,30 @@ export default function App() {
             </button>
           </div>
 
-          {error && (
-            <div className="flex items-center text-red-400 text-xs gap-1.5 bg-red-400/10 border border-red-500/20 px-3 py-1.5 rounded-full font-medium">
-              <AlertCircle size={14} /> Syntax Error
-            </div>
-          )}
+          <div className="flex items-center gap-4">
+            {getAvailableNodes().length > 1 && activeTab === 'table' && (
+              <div className="flex items-center gap-2 bg-[#252526] px-3 py-1.5 rounded-md border border-[#333] shadow-inner">
+                <Database size={14} className="text-purple-400" />
+                <select 
+                  value={selectedNode} 
+                  onChange={(e) => setSelectedNode(e.target.value)}
+                  className="bg-transparent text-xs font-semibold text-gray-200 outline-none cursor-pointer"
+                >
+                  {getAvailableNodes().map(node => (
+                    <option key={node} value={node} className="bg-[#252526]">
+                      {node === 'root' ? 'View: All Data' : `Table: ${node}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {error && (
+              <div className="flex items-center text-red-400 text-xs gap-1.5 bg-red-400/10 border border-red-500/20 px-3 py-1.5 rounded-full font-medium">
+                <AlertCircle size={14} /> Syntax Error
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Content Area */}
@@ -252,7 +316,7 @@ export default function App() {
 
           {activeTab === 'table' && (
             <div className="h-full bg-[#121212] animate-in fade-in duration-200">
-              {parsedData ? <JsonTable data={parsedData} /> : <div className="text-gray-500 flex justify-center mt-10">Invalid or empty JSON.</div>}
+              {parsedData ? <JsonTable data={getActiveData()} /> : <div className="text-gray-500 flex justify-center mt-10">Invalid or empty JSON.</div>}
             </div>
           )}
         </div>
