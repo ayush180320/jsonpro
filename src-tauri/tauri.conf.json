@@ -13,7 +13,11 @@
     "allowlist": { "all": true },
     "bundle": {
       "active": true,
-      "identifier": "com.json.tool"
+      "identifier": "com.json.tool",
+      "icon": [
+        "icons/32x32.png",
+        "icons/icon.ico"
+      ]
     },
     "windows": [
       {
