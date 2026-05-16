@@ -1,0 +1,26 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "http://localhost:1420",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "Pro JSON Tool",
+    "version": "1.0.0"
+  },
+  "tauri": {
+    "allowlist": { "all": true },
+    "bundle": {
+      "active": true,
+      "identifier": "com.json.tool"
+    },
+    "windows": [
+      {
+        "title": "Pro JSON Tool",
+        "width": 1100,
+        "height": 700
+      }
+    ]
+  }
+}
